@@ -35,7 +35,7 @@ pip install -r requirements.txt
 Finally, install the SuperSeeker Pipeline Python package:
 
 ```bash
-pip install superseeker_pipeline.
+pip install superseeker_pipeline
 ```
 
 This will install the package in "editable" mode, meaning changes to the code will be reflected without needing to reinstall the package. This is useful for development.
