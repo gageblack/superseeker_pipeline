@@ -20,17 +20,7 @@ conda install -c bioconda pyclone-vi
 SuperSeeker is used for reconstructing the evolutionary history of subclones. You can install it from its source repository:
 
 ```bash
-git clone https://github.com/yourusername/superseeker.git
-cd superseeker
-make install
-```
-
-### Step 2: Install Python Dependencies
-
-Clone the SuperSeeker repository and navigate to the project directory:
-
-```bash
-git clone https://github.com/yourusername/SuperSeeker.git
+git clone https://github.com/yiq/SuperSeeker.git
 cd SuperSeeker
 ```
 
@@ -42,10 +32,10 @@ pip install -r requirements.txt
 
 ### Step 3: Install the SuperSeeker Python Package
 
-Finally, install the SuperSeeker Python package:
+Finally, install the SuperSeeker Pipeline Python package:
 
 ```bash
-pip install -e .
+pip install superseeker_pipeline.
 ```
 
 This will install the package in "editable" mode, meaning changes to the code will be reflected without needing to reinstall the package. This is useful for development.
