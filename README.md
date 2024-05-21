@@ -37,9 +37,6 @@ Finally, install the SuperSeeker Pipeline Python package:
 ```bash
 pip install superseeker_pipeline
 ```
-
-This will install the package in "editable" mode, meaning changes to the code will be reflected without needing to reinstall the package. This is useful for development.
-
 ## Usage
 
 To use the SuperSeeker pipeline, you can run the `run_pipeline` function from the `superseeker.pipeline` module. Here's an example:
