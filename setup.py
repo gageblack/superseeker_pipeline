@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='superseeker_pipeline',
+    name='superseeker',
     version='0.1',
     packages=find_packages(),
     install_requires=[
@@ -10,11 +10,11 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'superseeker_pipeline=pipeline.pipeline:run_pipeline',
+            'superseeker=pipeline.pipeline:run_pipeline',
         ],
     },
-    author='Your Name',
-    author_email='your.email@example.com',
+    author='Gage Black',
+    author_email='gage.black@utah.edu',
     description='SuperSeeker_Pipeline is a Python library for identifying subclonal evolution in cancer.',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
