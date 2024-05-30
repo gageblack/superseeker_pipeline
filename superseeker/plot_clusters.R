@@ -5,23 +5,13 @@ suppressPackageStartupMessages(library(ggplot2))
 suppressPackageStartupMessages(library(gridExtra))
 suppressPackageStartupMessages(library(plotly))
 
-#setwd("~/Desktop/HIPAA/super_auto/rapid_aut/")
-#setwd("~/Desktop/HIPAA/super_auto/CLL_patients/251185/")
-#setwd("~/Desktop/HIPAA/super_auto/")
-
 args = commandArgs(trailingOnly=TRUE)
 patient = args[1]
 infile = args[2]
 outfile = args[3]
 vcf=readVcf(infile, "hg38")
 
-
-#vcf=readVcf(paste("CLL_patients/",patient,"/",patient,".somatic.clustered.vcf",sep=""), "hg38")
-
 print(patient)
-
-#vcf=readVcf("251185.somatic.lichee_clustered.vcf", "hg38")
-#vcf=readVcf("rapid_aut.subclones.vcf", "hg38")
 
 AO = as.data.frame(geno(vcf)$AO); # Number of alt allele oberservations
 RO = geno(vcf)$RO; # Number of ref allele overservations
@@ -82,6 +72,5 @@ plotVariantCrossSamples=function(variant_vector=NA, samples,col,new_plot=TRUE){
 }
 
 pdf(file=outfile, width = 5, height = 5)
-#pdf(file="251185.lichee.lines.pdf", width = 5, height = 5)
 plotVariantCrossSamples(samples=c(1:length(AO)),col="Black")
 dev.off()

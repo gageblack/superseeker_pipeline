@@ -3,12 +3,11 @@ import subprocess
 from .data_manipulation import (
     vcf_to_pyclone_input,
     pyclone_to_vcf,
-    extract_sseeker_stats,
+    identify_evolution,
     make_dot_files
 )
 
-def run_pipeline(patient, vcf_file, patient_sex, restarts, clusters, cn_neutral=False, cn_override=False, germfilter=False):
-    facets_dir = f'/scratch/ucgd/lustre-work/marth/u0829237/cll/analysis/2.facets/{patient}'
+def run_pipeline(patient, vcf_file, facets_dir, patient_sex, restarts, clusters, cn_neutral=False, cn_override=False, germfilter=False):
     output_dir = f'{patient}'
     
     # Convert VCF to PyClone input
@@ -27,7 +26,7 @@ def run_pipeline(patient, vcf_file, patient_sex, restarts, clusters, cn_neutral=
     
     # Add PyClone clusters to VCF
     clustered_vcf_file = f'{output_dir}/{patient}.somatic.clustered.vcf'
-    pyclone_to_vcf(patient, vcf_file, clustered_file, clustered_vcf_file)
+    pyclone_to_vcf(vcf_file, clustered_file, clustered_vcf_file)
     
     # Make graphical representation of clustering
     cluster_lines_pdf = f'{output_dir}/{patient}.cluster_lines.pdf'
@@ -45,6 +44,6 @@ def run_pipeline(patient, vcf_file, patient_sex, restarts, clusters, cn_neutral=
     # Extract SuperSeeker stats
     stats_file = f'{output_dir}/{patient}.stats.txt'
     evolution_file = f'{output_dir}/{patient}.evolution.txt'
-    extract_sseeker_stats(stats_file, evolution_file)
+    identify_evolution(stats_file, evolution_file)
     
     print("ALL DONE!")
