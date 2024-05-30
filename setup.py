@@ -10,7 +10,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'superseeker=superseeker.pipeline:run_pipeline',
+            'superseeker_pipeline=pipeline.pipeline:run_pipeline',
         ],
     },
     author='Your Name',

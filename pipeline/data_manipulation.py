@@ -363,4 +363,3 @@ def identify_evolution(stats_file, output_file):
 
     input_file.close()
     output_file.close()
-    pass
