@@ -47,10 +47,8 @@ from superseeker.pipeline import run_pipeline
 run_pipeline(
     patient='patient1',
     vcf_file='input_file.vcf',
-    patient_sex='M',
     restarts=100,
-    clusters=10,
-    cn_neutral=True
+    clusters=10
 )
 ```
 

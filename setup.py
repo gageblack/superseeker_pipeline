@@ -10,7 +10,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'superseeker=pipeline.pipeline:run_pipeline',
+            'superseeker=superseeker.pipeline:run_pipeline',
         ],
     },
     author='Gage Black',
