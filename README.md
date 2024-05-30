@@ -1,5 +1,5 @@
 
-# SuperSeeker
+# SuperSeeker Pipeline
 
 The SuperSeeker pipeline is a Python library for identifying subclonal evolution in cancer. It integrates various tools and scripts to process VCF files, cluster variants using PyClone-VI, and reconstruct subclonal evolutionary trees using SuperSeeker.
 
