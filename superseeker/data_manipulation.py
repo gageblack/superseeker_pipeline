@@ -141,7 +141,7 @@ def vcf_to_pyclone_input(vcf_file_name, facets_dir, output_file, patient_sex, cn
     #    to the output per sample, indicating which sample it came from and inputting the needed info
     # 5. Once each sample value for that variant has a line in the output, move on to the next variant
     # 6. Make sure that Y chromosomes are getting a Normal CN of 1. Everything else is 2.
-    
+  
     HIGH_IMPACT = False #I think all variants are needed for clustering.
     ## Step 1. ##
     if vcf_file_name[-7:] == ".vcf.gz": ## This is not working yet. For some reason it adds b' ' to every line.
@@ -171,14 +171,8 @@ def vcf_to_pyclone_input(vcf_file_name, facets_dir, output_file, patient_sex, cn
         samples = columns[9:]
     print(samples)
 
-    if facets_dir == "":
-        cn_override = "TRUE"
-
     samples_cn_lists = []
-    if patient_sex == "M":
-        X_normal_cn = 1
-    else:
-        X_normal_cn = 2
+    X_normal_cn = 2
     ## Step 3 ##
     if cn_override != "TRUE":
         samples_cn_lists, X_normal_cn = get_CN_info(samples)
@@ -355,17 +349,38 @@ def identify_evolution(stats_file, output_file):
         output_file.write("Replacement\n")
     elif emergence:
         print("Positive Selection")
-        output_file.write("New Clone Emergence\n")
+        output_file.write("Positive Selection\n")
     elif selection:
         print("Negative Selection")
-        output_file.write("Selection\n")
+        output_file.write("Negative Selection\n")
     else:
         print("No Evolution")
         output_file.write("No Evolution\n")
 
-    output_file.write("Subclones with selection: "+",".join(selection_list)+"\n")
-    output_file.write("Subclones with new clone emergence: "+",".join(emergence_list)+"\n")
-    output_file.write("Subclones with replacement: "+",".join(replacement_list)+"\n")
+    output_file.write("Subclones with Negative Selection: "+",".join(selection_list)+"\n")
+    output_file.write("Subclones with Postive Selection: "+",".join(emergence_list)+"\n")
+    output_file.write("Subclones with Replacement: "+",".join(replacement_list)+"\n")
 
     input_file.close()
     output_file.close()
+
+def make_dot_files(subclones_vcf, tmp_graph_files):
+    vcf_file_name = subclones_vcf
+    tmp_dir = tmp_graph_files
+
+    infile = open(vcf_file_name, "r")
+    i = 0
+    for line in infile:
+        if line[0] != "#":
+            break
+        if line[0:10] == "##subclone":
+            i=i+1
+            edges = line.split("\"")[1]
+            outfile = open(tmp_dir+"/solution"+str(i)+".gv", "w")
+            outfile.write("digraph D{\n")
+            for edge in edges.split(", "):
+                outfile.write(edge+"\n")
+            outfile.write("label=\"Solution "+str(i)+"\"\nlabelloc=\"t\"\n}"+"\n")
+            outfile.close()
+
+    infile.close()
