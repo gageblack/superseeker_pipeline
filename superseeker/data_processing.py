@@ -1,4 +1,7 @@
-# superseeker/data_manipulation.py
+# superseeker/data_processing.py
+
+import pandas as pd
+import matplotlib.pyplot as plt
 
 def get_CN_info(samples, facets_dir, patient_sex): # For vcf_to_pyclone_input()
     output_list = []
@@ -29,6 +32,9 @@ def get_CN_info(samples, facets_dir, patient_sex): # For vcf_to_pyclone_input()
             if minor_cn == "NA":
                 continue
             major_cn = str(int(total_cn)-int(minor_cn))
+            if major_cn == "0":
+                major_cn = "1"
+                minor_cn = "0"
             entry.append([chrom,start,end,cell_fraction,total_cn,major_cn,minor_cn])
         output_list.append(entry)
         cn_file.close()
@@ -77,7 +83,7 @@ def get_variant_output_lines(variant_line, samples, output_file, HIGH_IMPACT=Fal
 
     # Calculate the germline AF of the variant, and exlude the variant if the 
     # AF is too high in the germline variant. This is to remove likely artifacts
-    if germfilter == "TRUE":
+    if germfilter:
         germline_alt = fields[9].split(":")[AO_index]
         germline_ref = fields[9].split(":")[RO_index]
         Germline_AF = int(germline_alt)/(int(germline_alt)+int(germline_ref))
@@ -87,7 +93,7 @@ def get_variant_output_lines(variant_line, samples, output_file, HIGH_IMPACT=Fal
     output = ""
     i = 0
     while i < len(samples):
-        if germfilter == "TRUE":
+        if germfilter:
             sample_info = fields[10+i].split(":")
         else:
             sample_info = fields[9+i].split(":")
@@ -96,7 +102,7 @@ def get_variant_output_lines(variant_line, samples, output_file, HIGH_IMPACT=Fal
         alt_counts = sample_info[AO_index]
         
         ## You could figure out how to filter germline AFs that are high. You need to figure out how to make sure it's the germline tho.
-        if cn_override == "TRUE":
+        if cn_override:
             major_cn, minor_cn= "1","1"
             if fields[0] == "chrX" and patient_sex == "M":
                 normal_cn = "1"
@@ -108,7 +114,7 @@ def get_variant_output_lines(variant_line, samples, output_file, HIGH_IMPACT=Fal
                 normal_cn = X_normal_cn # This is a rough way to estimate. There may be a better option.
             else:
                 normal_cn = "2" 
-            if cn_neutral == "TRUE": ## If it has been specified that no variants in CNV regions should be included, this will add the minor and major CNs 
+            if cn_neutral: ## If it has been specified that no variants in CNV regions should be included, this will add the minor and major CNs 
                     ## together. If it doesn't equal the expected normal copy number, skip it.
                 if int(major_cn)+int(minor_cn) != int(normal_cn):
                     print("skipping: "+str(",".join([mutation_id, sample_id, ref_counts, alt_counts, major_cn, minor_cn, normal_cn])))
@@ -118,7 +124,7 @@ def get_variant_output_lines(variant_line, samples, output_file, HIGH_IMPACT=Fal
     output_file.write(output)
     return
 
-def vcf_to_pyclone_input(vcf_file_name, facets_dir, output_file, patient_sex, cn_neutral, cn_override, germfilter):
+def vcf_to_pyclone_input(vcf_file_name, facets_dir, output_file_name, patient_sex, cn_neutral, cn_override, germfilter):
     ## Input: Somatic VCF file (merged?) and facets cncf file for each sample, patient sex (F or M) is optional.
     ## Important: Right now the vcf file must be decompressed!
     ## Output: Tab-delimited file with the following columns:
@@ -152,6 +158,8 @@ def vcf_to_pyclone_input(vcf_file_name, facets_dir, output_file, patient_sex, cn
     else:
         print ("Improper VCF file format. Exiting...")
         exit()
+    
+    output_file = open(output_file_name, "w")
 
     ## Step 2. ##
     variant_lines = [] # This will hold the line of each variant in the VCF file for the patient.
@@ -164,18 +172,19 @@ def vcf_to_pyclone_input(vcf_file_name, facets_dir, output_file, patient_sex, cn
             variant_lines.append(line.strip())
 
     columns = header_line.split("\t")
-    if germfilter == "TRUE":
+    if germfilter:
         germline_sample = columns[9]
         samples = columns[10:] # I think this way of getting sample IDs will only work for the CLL workflow. It will need to be more robust in future. Starts at 10 to skip germline sample.
     else: 
         samples = columns[9:]
+    print("Samples being processed: ")
     print(samples)
 
     samples_cn_lists = []
     X_normal_cn = 2
     ## Step 3 ##
-    if cn_override != "TRUE":
-        samples_cn_lists, X_normal_cn = get_CN_info(samples)
+    if not cn_override:
+        samples_cn_lists, X_normal_cn = get_CN_info(samples, facets_dir, patient_sex)
 
     ## print to ouput file.
     output_file.write("mutation_id\tsample_id\tref_counts\talt_counts\tmajor_cn\tminor_cn\tnormal_cn\n")
@@ -187,7 +196,7 @@ def vcf_to_pyclone_input(vcf_file_name, facets_dir, output_file, patient_sex, cn
 
 ######################################
 
-def pyclone_to_vcf(vcf_file, clustered_file, output_file, HIGH_IMPACT=False):
+def pyclone_to_vcf(vcf_file, clustered_file, output_file_name, HIGH_IMPACT=False):
     # The pyclone cluster assignment is added to the INFO section for each variant in the original somatic VCF file.
     # The cluster is added as ";AFCLU=0".
 
@@ -206,6 +215,7 @@ def pyclone_to_vcf(vcf_file, clustered_file, output_file, HIGH_IMPACT=False):
 
     pyclone_file = open(pyclone_file_name, 'r')
     vcf_file = open(vcf_file_name, 'r')
+    output_file = open(output_file_name, "w")
 
     # For each line in pyclone file, add the {mutation_id : cluster} to a dictionary. 
     cluster_assignments = dict()
@@ -384,3 +394,72 @@ def make_dot_files(subclones_vcf, tmp_graph_files):
             outfile.close()
 
     infile.close()
+
+def make_line_plot(vcf_file_name, title, show, save, plot_file_name="vaf.png"):
+
+    ## Make a DataFrame of the variant allele frequencies ##    
+    variant_df = pd.DataFrame(columns=["Sample", "Position", "BP_Change", "Cluster", "Allele_Frequency"])
+
+    infile = open(vcf_file_name, "r")
+    i = 0
+    ## Extract info from VCF ##
+    for line in infile:
+        if line[0] == "#":
+            header = line.strip().split()
+        else:
+            fields = line.strip().split()
+            clu = fields[7].split(";")[-1].split("=")[1]
+            Format = fields[8].split(":")
+            AO_index = Format.index("AO")
+            DP_index = Format.index("DP")
+            for samp_col_num in range(9, len(fields)):
+                sample_name = header[samp_col_num]
+                dp = fields[samp_col_num].split(":")[DP_index]
+                ao = fields[samp_col_num].split(":")[AO_index]
+                af = float(ao)/float(dp)
+                variant_df.loc[len(variant_df.index)] = [sample_name, fields[0]+":"+fields[1], fields[3]+"->"+fields[4], clu, af]
+    infile.close()
+
+    ## Make the line plot of the VAFs for each mutation in each label group (cell type) ##
+    # Get the unique sample order from the original DataFrame
+    sample_order = variant_df['Sample'].unique()
+
+    # Pivot the DataFrame to make each column represent a mutation_id and each row a sample_id, with values being cellular_prevalence
+    allele_freq_matrix = variant_df.pivot(index='Sample', columns='Position', values='Allele_Frequency')
+
+    # Reindex to preserve the original sample order
+    allele_freq_matrix = allele_freq_matrix.reindex(sample_order)
+
+    # Determine unique clusters
+    unique_clusters = variant_df['Cluster'].unique()
+    cluster_colors = {cluster: plt.get_cmap('gist_rainbow')(i / len(unique_clusters)) for i, cluster in enumerate(unique_clusters)}
+    
+    # Set font sizes
+    plt.rcParams.update({
+        'font.size': 14,
+        'axes.titlesize': 20,
+        'axes.labelsize': 18,
+        'xtick.labelsize': 14,
+        'ytick.labelsize': 14,
+        'legend.fontsize': 14
+    })
+    plt.figure(figsize=(16, 10))
+
+    # Plotting each mutation_id with a color based on its cluster
+    for position in allele_freq_matrix.columns:
+        mutation_cluster = variant_df[variant_df['Position'] == position]['Cluster'].iloc[0]
+        color = cluster_colors[mutation_cluster]
+        plt.plot(allele_freq_matrix.index, allele_freq_matrix[position], label=position, 
+                 linestyle='-', linewidth=2, alpha=0.7, color=color)
+    
+    plt.xticks(rotation=90)
+    plt.title(title)
+    plt.ylabel('Cellular Prevalence')
+    plt.xlabel('Sample ID')
+    plt.legend(title='Mutation ID', bbox_to_anchor=(1.05, 1), loc='upper left', fontsize='small')
+    plt.tight_layout()
+    
+    if show:
+        plt.show()
+    if save:
+        plt.savefig(plot_file_name, bbox_inches='tight')
