@@ -2,71 +2,154 @@
 
 import pandas as pd
 import matplotlib.pyplot as plt
+import logging
+from pathlib import Path
+from typing import Dict, List, Tuple
 
-def get_CN_info(samples, facets_dir, patient_sex): # For vcf_to_pyclone_input()
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+def get_CN_info(samples: List[str], facets_dir: str, patient_sex: str) -> Tuple[List[List[str]], str]:
+    """Extract copy number information from FACETS output files.
+    
+    Args:
+        samples: List of sample identifiers
+        facets_dir: Path to FACETS output directory
+        patient_sex: Patient sex ('F' or 'M')
+        
+    Returns:
+        Tuple containing:
+            - List of copy number entries for each sample
+            - Normal copy number for X chromosome
+            
+    Raises:
+        FileNotFoundError: If FACETS output files are not found
+        ValueError: If patient sex is invalid
+    """
+    if patient_sex not in ['F', 'M']:
+        raise ValueError("Patient sex must be 'F' or 'M'")
+        
     output_list = []
-    x_cn_list = dict()
+    x_cn_list: Dict[str, int] = {}
+    
     for samp in samples:
-        ## open facets cncf file for that sample
-        cn_file = open(facets_dir+"/"+samp+".cncf.txt", "r")
+        cn_file_path = Path(facets_dir) / f"{samp}.cncf.txt"
+        if not cn_file_path.exists():
+            raise FileNotFoundError(f"FACETS output file not found: {cn_file_path}")
+            
+        logger.info(f"Processing FACETS output for sample {samp}")
         entry = []
-        for line in cn_file:
-            info = line.strip().split("\t")
-            chrom = info[0]
-            if chrom == "chrom":
-                continue
-            start = info[9]
-            end = info[10]
-            cell_fraction = info[11]
-            total_cn = info[12]
-            minor_cn = info[13]
-            # If it's chromosome 23, then get the distance (in bp) of the entry, and then add it to a dictionary. 
-            # Once all of the samples have been processed, this will find the total_copy_number that spans the 
-            # most distance, and assume that is the normal copy number for the X chromosome. 
-            if chrom == "23" and patient_sex != "M" and patient_sex != "Y": 
-                dist = int(end) - int(start)
-                if total_cn in x_cn_list.keys():
-                    x_cn_list[total_cn] = x_cn_list[total_cn] + dist
-                else:
-                    x_cn_list[total_cn] = dist
-            if minor_cn == "NA":
-                continue
-            major_cn = str(int(total_cn)-int(minor_cn))
-            if major_cn == "0":
-                major_cn = "1"
-                minor_cn = "0"
-            entry.append([chrom,start,end,cell_fraction,total_cn,major_cn,minor_cn])
+        
+        with open(cn_file_path, "r") as cn_file:
+            for line in cn_file:
+                info = line.strip().split("\t")
+                if info[0] == "chrom":
+                    continue
+                    
+                chrom = info[0]
+                start = info[9]
+                end = info[10]
+                cell_fraction = info[11]
+                total_cn = info[12]
+                minor_cn = info[13]
+                
+                # Handle X chromosome copy number
+                if chrom == "23" and patient_sex not in ["M", "Y"]:
+                    dist = int(end) - int(start)
+                    x_cn_list[total_cn] = x_cn_list.get(total_cn, 0) + dist
+                    
+                if minor_cn == "NA":
+                    continue
+                    
+                major_cn = str(int(total_cn) - int(minor_cn))
+                if major_cn == "0":
+                    major_cn = "1"
+                    minor_cn = "0"
+                    
+                entry.append([chrom, start, end, cell_fraction, total_cn, major_cn, minor_cn])
+                
         output_list.append(entry)
-        cn_file.close()
+        
+    # Determine X chromosome copy number
     if patient_sex == "M":
         X_cn = "1"
-    elif patient_sex == "F" or len(x_cn_list.keys()) == 0:  
+    elif patient_sex == "F" or not x_cn_list:
         X_cn = "2"
     else:
-        X_cn = max(x_cn_list, key=x_cn_list.get)
+        X_cn = max(x_cn_list.items(), key=lambda x: x[1])[0]
+        
     return output_list, X_cn
 
-def get_copy_numbers(sample_cn_data, chr, position, X_normal_cn = 2): # For vcf_to_pyclone_input()
-    major = "1" 
+def get_copy_numbers(
+    sample_cn_data: List[List[str]],
+    chr: str,
+    position: str,
+    X_normal_cn: int = 2
+) -> Tuple[str, str]:
+    """Get copy numbers for a specific genomic position.
+    
+    Args:
+        sample_cn_data: Copy number data for a sample
+        chr: Chromosome
+        position: Genomic position
+        X_normal_cn: Normal copy number for X chromosome
+        
+    Returns:
+        Tuple of (major_cn, minor_cn)
+    """
+    major = "1"
     minor = "1"
     
     if len(chr) > 3 and chr[:3] == "chr":
         chr = chr[3:]
+        
     for val in sample_cn_data:
         if val[0] != chr:
             continue
-        if int(val[1]) < int(position) and int(val[2]) > int(position): #If start index is less than position, and end index is greater than:
+        if int(val[1]) < int(position) and int(val[2]) > int(position):
             major = val[5]
             minor = val[6]
             return major, minor
-    if (chr == "X"):
-        minor = str(int(X_normal_cn)-1)
+            
+    if chr == "X":
+        minor = str(int(X_normal_cn) - 1)
+        
     return major, minor
 
-def get_variant_output_lines(variant_line, samples, output_file, HIGH_IMPACT=False, germfilter=False, cn_override=False, cn_neutral=False, patient_sex="F", X_normal_cn=2, samples_cn_lists=[]): # For vcf_to_pyclone_input()
+def get_variant_output_lines(
+    variant_line: str,
+    samples: List[str],
+    output_file,
+    HIGH_IMPACT: bool = False,
+    germfilter: bool = False,
+    cn_override: bool = False,
+    cn_neutral: bool = False,
+    patient_sex: str = "F",
+    X_normal_cn: int = 2,
+    samples_cn_lists: List[List[List[str]]] = []
+) -> None:
+    """Process a variant line and write output to file.
+    
+    Args:
+        variant_line: Line from VCF file
+        samples: List of sample identifiers
+        output_file: File object to write output to
+        HIGH_IMPACT: Whether to filter for high impact variants
+        germfilter: Whether to filter germline variants
+        cn_override: Whether to override copy number information
+        cn_neutral: Whether to exclude variants in CNV regions
+        patient_sex: Patient sex ('F' or 'M')
+        X_normal_cn: Normal copy number for X chromosome
+        samples_cn_lists: Copy number data for each sample
+    """
     fields = variant_line.strip().split("\t")
-    mutation_id = fields[0]+":"+fields[1]+":"+fields[4]
+    mutation_id = f"{fields[0]}:{fields[1]}:{fields[4]}"
     info = fields[7].split(";")
+    
     if HIGH_IMPACT:
         for i in reversed(info):
             if i[:4] == "ANN=":
@@ -77,216 +160,225 @@ def get_variant_output_lines(variant_line, samples, output_file, HIGH_IMPACT=Fal
                     if a == "MODIFIER" or a == "LOW":
                         return
                 break
+                
     Format = fields[8].split(':')
     AO_index = Format.index("AO")
     RO_index = Format.index("RO")
-
-    # Calculate the germline AF of the variant, and exlude the variant if the 
-    # AF is too high in the germline variant. This is to remove likely artifacts
+    
     if germfilter:
         germline_alt = fields[9].split(":")[AO_index]
         germline_ref = fields[9].split(":")[RO_index]
         Germline_AF = int(germline_alt)/(int(germline_alt)+int(germline_ref))
-        if Germline_AF >= 0.01:# and Germline_AF <=0.2: 
+        if Germline_AF >= 0.01:
             pass
-            #return
+            
     output = ""
-    i = 0
-    while i < len(samples):
+    for i, sample_id in enumerate(samples):
         if germfilter:
             sample_info = fields[10+i].split(":")
         else:
             sample_info = fields[9+i].split(":")
-        sample_id = samples[i]
+            
         ref_counts = sample_info[RO_index]
         alt_counts = sample_info[AO_index]
         
-        ## You could figure out how to filter germline AFs that are high. You need to figure out how to make sure it's the germline tho.
         if cn_override:
-            major_cn, minor_cn= "1","1"
-            if fields[0] == "chrX" and patient_sex == "M":
-                normal_cn = "1"
-            else:
-                normal_cn = "2"
+            major_cn, minor_cn = "1", "1"
+            normal_cn = "1" if fields[0] == "chrX" and patient_sex == "M" else "2"
         else:
-            major_cn, minor_cn = get_copy_numbers(samples_cn_lists[i], fields[0], fields[1]) #passing in the list of lists, chr, and position
-            if fields[0] == "chrX":
-                normal_cn = X_normal_cn # This is a rough way to estimate. There may be a better option.
-            else:
-                normal_cn = "2" 
-            if cn_neutral: ## If it has been specified that no variants in CNV regions should be included, this will add the minor and major CNs 
-                    ## together. If it doesn't equal the expected normal copy number, skip it.
-                if int(major_cn)+int(minor_cn) != int(normal_cn):
-                    print("skipping: "+str(",".join([mutation_id, sample_id, ref_counts, alt_counts, major_cn, minor_cn, normal_cn])))
-                    return
-        output = output + str("\t".join([mutation_id, sample_id, ref_counts, alt_counts, major_cn, minor_cn, normal_cn])+"\n")
-        i = i+1
+            major_cn, minor_cn = get_copy_numbers(samples_cn_lists[i], fields[0], fields[1])
+            normal_cn = X_normal_cn if fields[0] == "chrX" else "2"
+            
+            if cn_neutral and int(major_cn) + int(minor_cn) != int(normal_cn):
+                logger.debug(f"Skipping variant in CNV region: {mutation_id}")
+                return
+                
+        output += f"{mutation_id}\t{sample_id}\t{ref_counts}\t{alt_counts}\t{major_cn}\t{minor_cn}\t{normal_cn}\n"
+        
     output_file.write(output)
-    return
 
-def vcf_to_pyclone_input(vcf_file_name, facets_dir, output_file_name, patient_sex, cn_neutral, cn_override, germfilter):
-    ## Input: Somatic VCF file (merged?) and facets cncf file for each sample, patient sex (F or M) is optional.
-    ## Important: Right now the vcf file must be decompressed!
-    ## Output: Tab-delimited file with the following columns:
-    # 1. mutation_id - Unique identifier for the mutation. This is free form but should match across all samples.
-    # 2. sample_id - Unique identifier for the sample.
-    # 3. ref_counts - Number of reads matching the reference allele.
-    # 4. alt_counts - Number of reads matching the alternate allele.
-    # 5. major_cn - Major copy number of segment overlapping mutation.
-    # 6. minor_cn - Minor copy number of segment overlapping mutation.
-    # 7. normal_cn - Total copy number of segment in healthy tissue. For autosome this will be two and male sex chromosomes one.
-    # Optional:
-    # 8. tumour_content - The tumour content (cellularity) of the sample. Default value is 1.0 if column is not present.
-    # 9. error_rate - Sequencing error rate. Default value is 0.001 if column is not present.
-
-    ## Steps ##
-    # 1. Read in VCF file, and get the sample names that are included in VCF
-    # 2. Read in the facets cncf files for each sample one at at time
-    # 3. For each sample, store the CNV info for each region. Include the start and end, and the major/minor info.
-    # 4. For each variant in the VCF file, iterate through each of the sample read count values. Add one line
-    #    to the output per sample, indicating which sample it came from and inputting the needed info
-    # 5. Once each sample value for that variant has a line in the output, move on to the next variant
-    # 6. Make sure that Y chromosomes are getting a Normal CN of 1. Everything else is 2.
-  
-    HIGH_IMPACT = False #I think all variants are needed for clustering.
-    ## Step 1. ##
-    if vcf_file_name[-7:] == ".vcf.gz": ## This is not working yet. For some reason it adds b' ' to every line.
-        #vcf_file = gzip.open(vcf_file_name, "rb")
-        print("VCF file is compressed. Please decompress and try again.")
-    elif vcf_file_name[-4:] == ".vcf":
-        vcf_file = open(vcf_file_name, "r")
-    else:
-        print ("Improper VCF file format. Exiting...")
-        exit()
+def vcf_to_pyclone_input(
+    vcf_file_name: str,
+    facets_dir: str,
+    output_file_name: str,
+    patient_sex: str,
+    cn_neutral: bool,
+    cn_override: bool,
+    germfilter: bool
+) -> None:
+    """Convert VCF file to PyClone-VI input format.
     
-    output_file = open(output_file_name, "w")
-
-    ## Step 2. ##
-    variant_lines = [] # This will hold the line of each variant in the VCF file for the patient.
-    for line in vcf_file:
-        if line[:2] == "##":
-            continue
-        if line[0] == "#":
-            header_line = line.strip()
-        else: 
-            variant_lines.append(line.strip())
-
-    columns = header_line.split("\t")
-    if germfilter:
-        germline_sample = columns[9]
-        samples = columns[10:] # I think this way of getting sample IDs will only work for the CLL workflow. It will need to be more robust in future. Starts at 10 to skip germline sample.
-    else: 
-        samples = columns[9:]
-    print("Samples being processed: ")
-    print(samples)
-
-    samples_cn_lists = []
-    X_normal_cn = 2
-    ## Step 3 ##
-    if not cn_override:
-        samples_cn_lists, X_normal_cn = get_CN_info(samples, facets_dir, patient_sex)
-
-    ## print to ouput file.
-    output_file.write("mutation_id\tsample_id\tref_counts\talt_counts\tmajor_cn\tminor_cn\tnormal_cn\n")
-    for line in variant_lines:
-        get_variant_output_lines(line, samples, output_file, HIGH_IMPACT, germfilter, cn_override, cn_neutral, patient_sex, X_normal_cn, samples_cn_lists)
-
-    output_file.close()
-    vcf_file.close()
-
-######################################
-
-def pyclone_to_vcf(vcf_file, clustered_file, output_file_name, HIGH_IMPACT=False):
-    # The pyclone cluster assignment is added to the INFO section for each variant in the original somatic VCF file.
-    # The cluster is added as ";AFCLU=0".
-
-    # Because superseeker currently calculates the allele frequency of the cluster by itself (averaging over all cluster members, 
-    # using the RO and AO values in the VCF). I would try not to use copy number variation region variants. 
-    # Although pyclone can "correct" for it, it is still a bit ambiguous because it's hard to say, out of e.g. 5 total copies, 
-    # how many had the reference and how many had the variant
-
-    ## Steps ##
-    # 1. Read in the VCF and pyclone output for the patient
-    # 2. Go through each variant in the pyclone output, and add it to the vcf 
-    # Will it be better to go through the VCF and find the pyclone output, or go through pyclone and add to VCF?
-
-    vcf_file_name = vcf_file
-    pyclone_file_name = clustered_file
-
-    pyclone_file = open(pyclone_file_name, 'r')
-    vcf_file = open(vcf_file_name, 'r')
-    output_file = open(output_file_name, "w")
-
-    # For each line in pyclone file, add the {mutation_id : cluster} to a dictionary. 
-    cluster_assignments = dict()
-    for line in pyclone_file:
-        fields = line.strip().split('\t')
-        if fields[0] == "mutation_id":
-            continue
-        elif fields[0] in cluster_assignments.keys():
-            continue
-        else:
-            cluster_assignments[fields[0]] = [fields[2]]
-
-    # for line in vcf file, 
-    # if it starts with a "#", just write it directly to the output file
-    # Otherwise, find the cluster the variant belongs to, add it to the info field, and then write the line.
-    info_line = "##INFO=<ID=AFCLU,Number=1,Type=String,Description=\"The allele frequency cluster this variant belongs to\">"
-    for line in vcf_file:
-        if line.strip()[:2] == "##":
-            output_file.write(line.strip()+'\n')
-        elif line.strip()[0] == "#":
-            output_file.write(info_line+'\n')
-            output_file.write(line.strip()+'\n')
-        else:
-            fields = line.split('\t')
-            mut_id = fields[0]+":"+fields[1]+":"+fields[4]
-            if mut_id in cluster_assignments.keys():
-                cluster = cluster_assignments[mut_id]
+    Args:
+        vcf_file_name: Path to VCF file
+        facets_dir: Path to FACETS output directory
+        output_file_name: Path to output file
+        patient_sex: Patient sex ('F' or 'M')
+        cn_neutral: Whether to exclude variants in CNV regions
+        cn_override: Whether to override copy number information
+        germfilter: Whether to filter germline variants
+        
+    Raises:
+        FileNotFoundError: If input files are not found
+        ValueError: If VCF file format is invalid
+    """
+    vcf_path = Path(vcf_file_name)
+    if not vcf_path.exists():
+        raise FileNotFoundError(f"VCF file not found: {vcf_file_name}")
+        
+    if vcf_path.suffix == ".vcf.gz":
+        raise ValueError("Compressed VCF files are not supported. Please decompress first.")
+    elif vcf_path.suffix != ".vcf":
+        raise ValueError("Input file must be a VCF file")
+        
+    logger.info(f"Converting VCF file to PyClone input format: {vcf_file_name}")
+    
+    with open(vcf_file_name, "r") as vcf_file, open(output_file_name, "w") as output_file:
+        variant_lines = []
+        header_line = ""
+        
+        for line in vcf_file:
+            if line[:2] == "##":
+                continue
+            if line[0] == "#":
+                header_line = line.strip()
             else:
-                print("Skipping " + mut_id + " from original VCF")
-                continue 
-            skip = False
-            info = fields[7].split(";")
-            if HIGH_IMPACT:
-                for i in reversed(info):
-                    if i[:4] == "ANN=":
-                        ann = i.split("|")
-                        for a in ann:
-                            if a == "HIGH" or a == "MODERATE":
-                                break
-                            if a == "MODIFIER" or a == "LOW":
-                                skip = True
-                        break
-            if not skip:
-                info_fields = fields[7].split(";")
-                if info_fields[-1].split("=")[0] == "AFCLU":
-                    info_fields[-1] = "AFCLU="+cluster[0]
-                else:
-                    info_fields.append("AFCLU="+cluster[0])
-                fields[7] = ";".join(info_fields)
-                output_file.write("\t".join(fields))
-    output_file.close()
-    vcf_file.close()
-    pyclone_file.close()
+                variant_lines.append(line.strip())
+                
+        columns = header_line.split("\t")
+        if germfilter:
+            germline_sample = columns[9]
+            samples = columns[10:]
+        else:
+            samples = columns[9:]
+            
+        logger.info(f"Processing {len(samples)} samples")
+        
+        samples_cn_lists = []
+        X_normal_cn = 2
+        
+        if not cn_override:
+            samples_cn_lists, X_normal_cn = get_CN_info(samples, facets_dir, patient_sex)
+            
+        output_file.write("mutation_id\tsample_id\tref_counts\talt_counts\tmajor_cn\tminor_cn\tnormal_cn\n")
+        
+        for line in variant_lines:
+            get_variant_output_lines(
+                line, samples, output_file, False, germfilter,
+                cn_override, cn_neutral, patient_sex, X_normal_cn, samples_cn_lists
+            )
 
+def pyclone_to_vcf(
+    vcf_file: str,
+    clustered_file: str,
+    output_file_name: str,
+    HIGH_IMPACT: bool = False
+) -> None:
+    """Add PyClone cluster assignments to VCF file.
+    
+    Args:
+        vcf_file: Path to input VCF file
+        clustered_file: Path to PyClone clustering results
+        output_file_name: Path to output VCF file
+        HIGH_IMPACT: Whether to filter for high impact variants
+        
+    Raises:
+        FileNotFoundError: If input files are not found
+    """
+    vcf_path = Path(vcf_file)
+    clustered_path = Path(clustered_file)
+    
+    if not vcf_path.exists():
+        raise FileNotFoundError(f"VCF file not found: {vcf_file}")
+    if not clustered_path.exists():
+        raise FileNotFoundError(f"Clustered file not found: {clustered_file}")
+        
+    logger.info("Adding PyClone clusters to VCF file")
+    
+    cluster_assignments = {}
+    with open(clustered_file, 'r') as pyclone_file:
+        for line in pyclone_file:
+            fields = line.strip().split('\t')
+            if fields[0] == "mutation_id":
+                continue
+            elif fields[0] not in cluster_assignments:
+                cluster_assignments[fields[0]] = [fields[2]]
+                
+    info_line = "##INFO=<ID=AFCLU,Number=1,Type=String,Description=\"The allele frequency cluster this variant belongs to\">"
+    
+    with open(vcf_file, 'r') as vcf_file, open(output_file_name, "w") as output_file:
+        for line in vcf_file:
+            if line.strip()[:2] == "##":
+                output_file.write(line.strip() + '\n')
+            elif line.strip()[0] == "#":
+                output_file.write(info_line + '\n')
+                output_file.write(line.strip() + '\n')
+            else:
+                fields = line.split('\t')
+                mut_id = f"{fields[0]}:{fields[1]}:{fields[4]}"
+                
+                if mut_id not in cluster_assignments:
+                    logger.debug(f"Skipping variant not found in clustering results: {mut_id}")
+                    continue
+                    
+                skip = False
+                info = fields[7].split(";")
+                
+                if HIGH_IMPACT:
+                    for i in reversed(info):
+                        if i[:4] == "ANN=":
+                            ann = i.split("|")
+                            for a in ann:
+                                if a == "HIGH" or a == "MODERATE":
+                                    break
+                                if a == "MODIFIER" or a == "LOW":
+                                    skip = True
+                            break
+                            
+                if not skip:
+                    info_fields = fields[7].split(";")
+                    cluster = cluster_assignments[mut_id]
+                    
+                    if info_fields[-1].split("=")[0] == "AFCLU":
+                        info_fields[-1] = f"AFCLU={cluster[0]}"
+                    else:
+                        info_fields.append(f"AFCLU={cluster[0]}")
+                        
+                    fields[7] = ";".join(info_fields)
+                    output_file.write("\t".join(fields))
 
-############### Below are functions for identifying patterns of evolution ##################
-class subclone:
-    def __init__(self, ID):
+class Subclone:
+    """Class representing a subclone with its evolutionary properties."""
+    
+    def __init__(self, ID: str):
+        """Initialize a new Subclone.
+        
+        Args:
+            ID: Subclone identifier
+        """
         self.ID = ID
-        self.vafs = []
+        self.vafs: List[float] = []
         self.selection = False
         self.emergence = False
         self.replacement = False
-
-    def add_vaf(self, vaf):
+        
+    def add_vaf(self, vaf: float) -> None:
+        """Add a variant allele frequency to the subclone.
+        
+        Args:
+            vaf: Variant allele frequency
+        """
         self.vafs.append(vaf)
 
-def find_replacement(subclones):
+def find_replacement(subclones: Dict[str, Subclone]) -> None:
+    """Identify subclones that show replacement pattern.
+    
+    Args:
+        subclones: Dictionary of Subclone objects
+    """
     for ID in subclones:
         highest_at_end = True
         not_highest_at_start = False
+        
         if subclones[ID].emergence:
             for check in subclones:
                 if check == ID:
@@ -295,146 +387,202 @@ def find_replacement(subclones):
                     highest_at_end = False
                 if subclones[check].vafs[1] > subclones[ID].vafs[1]:
                     not_highest_at_start = True
-        if not_highest_at_start and highest_at_end:
-            subclones[ID].replacement = True
+                    
+            if not_highest_at_start and highest_at_end:
+                subclones[ID].replacement = True
 
-def find_evolution(subclones): # Making this more invovled could help
-    result = []
+def find_evolution(subclones: Dict[str, Subclone]) -> None:
+    """Identify evolutionary patterns in subclones.
+    
+    Args:
+        subclones: Dictionary of Subclone objects
+    """
     for ID in subclones:
-        i = 1 # This will start iterating the clusters at the index after germline.
+        i = 1  # Start after germline
         change = 0.0
-        while i < len(subclones[ID].vafs)-1:
-            change = change + (float(subclones[ID].vafs[i+1]) - float(subclones[ID].vafs[i]))
+        
+        while i < len(subclones[ID].vafs) - 1:
+            change += float(subclones[ID].vafs[i+1]) - float(subclones[ID].vafs[i])
+            
             if change >= 0.1:
                 subclones[ID].emergence = True
             if change <= -0.1:
                 subclones[ID].selection = True
-            i = i+1
+                
+            i += 1
 
-def identify_evolution(stats_file, output_file):
-    input_file_name = stats_file
-    input_file = open(input_file_name, 'r')
-    subclones = dict()
-    clusters = input_file.readline().strip().split("\t")
-    too_small = False
-    for cluster in clusters:
-        subclones[cluster] = subclone(cluster)
-    for line in input_file:
-        if line[:4] == "Move":
-            break
-        sample = line.strip().split("\t")
-        if len(sample) < 4: # This should exit with no evolution if there is only 1 tumor sample.
-            too_small = True
-            break
-        i = 0
-        for val in sample[1:]:
-            subclones[str(i)].add_vaf(val)
-            i = i+1
-
-    if not too_small:
+def identify_evolution(stats_file: str, output_file: str) -> None:
+    """Identify evolutionary patterns from SuperSeeker stats.
+    
+    Args:
+        stats_file: Path to SuperSeeker stats file
+        output_file: Path to output file
+        
+    Raises:
+        FileNotFoundError: If input file is not found
+    """
+    stats_path = Path(stats_file)
+    if not stats_path.exists():
+        raise FileNotFoundError(f"Stats file not found: {stats_file}")
+        
+    logger.info("Identifying evolutionary patterns")
+    
+    with open(stats_file, 'r') as input_file, open(output_file, 'w') as output_file:
+        subclones = {}
+        clusters = input_file.readline().strip().split("\t")
+        
+        for cluster in clusters:
+            subclones[cluster] = Subclone(cluster)
+            
+        for line in input_file:
+            if line[:4] == "Move":
+                break
+                
+            sample = line.strip().split("\t")
+            if len(sample) < 4:
+                logger.warning("Not enough samples to identify evolution")
+                break
+                
+            for i, val in enumerate(sample[1:], 1):
+                subclones[str(i)].add_vaf(float(val))
+                
         find_evolution(subclones)
         find_replacement(subclones)
-
-    selection = False
-    emergence = False
-    replacement = False
-
-    selection_list = []
-    emergence_list = []
-    replacement_list = []
-
-    for ID in subclones:
-        if subclones[ID].selection:
-            selection = True
-            selection_list.append(ID)
-        if subclones[ID].emergence:
-            emergence = True
-            emergence_list.append(ID)
-        if subclones[ID].replacement:
-            replacement = True
-            replacement_list.append(ID)
         
-    if replacement:
-        print("Replacement")
-        output_file.write("Replacement\n")
-    elif emergence:
-        print("Positive Selection")
-        output_file.write("Positive Selection\n")
-    elif selection:
-        print("Negative Selection")
-        output_file.write("Negative Selection\n")
-    else:
-        print("No Evolution")
-        output_file.write("No Evolution\n")
-
-    output_file.write("Subclones with Negative Selection: "+",".join(selection_list)+"\n")
-    output_file.write("Subclones with Postive Selection: "+",".join(emergence_list)+"\n")
-    output_file.write("Subclones with Replacement: "+",".join(replacement_list)+"\n")
-
-    input_file.close()
-    output_file.close()
-
-def make_dot_files(subclones_vcf, tmp_graph_files):
-    vcf_file_name = subclones_vcf
-    tmp_dir = tmp_graph_files
-
-    infile = open(vcf_file_name, "r")
-    i = 0
-    for line in infile:
-        if line[0] != "#":
-            break
-        if line[0:10] == "##subclone":
-            i=i+1
-            edges = line.split("\"")[1]
-            outfile = open(tmp_dir+"/solution"+str(i)+".gv", "w")
-            outfile.write("digraph D{\n")
-            for edge in edges.split(", "):
-                outfile.write(edge+"\n")
-            outfile.write("label=\"Solution "+str(i)+"\"\nlabelloc=\"t\"\n}"+"\n")
-            outfile.close()
-
-    infile.close()
-
-def make_line_plot(vcf_file_name, title, show, save, plot_file_name="vaf.png"):
-
-    ## Make a DataFrame of the variant allele frequencies ##    
-    variant_df = pd.DataFrame(columns=["Sample", "Position", "BP_Change", "Cluster", "Allele_Frequency"])
-
-    infile = open(vcf_file_name, "r")
-    i = 0
-    ## Extract info from VCF ##
-    for line in infile:
-        if line[0] == "#":
-            header = line.strip().split()
+        selection = False
+        emergence = False
+        replacement = False
+        
+        selection_list = []
+        emergence_list = []
+        replacement_list = []
+        
+        for ID in subclones:
+            if subclones[ID].selection:
+                selection = True
+                selection_list.append(ID)
+            if subclones[ID].emergence:
+                emergence = True
+                emergence_list.append(ID)
+            if subclones[ID].replacement:
+                replacement = True
+                replacement_list.append(ID)
+                
+        if replacement:
+            evolution_type = "Replacement"
+        elif emergence:
+            evolution_type = "Positive Selection"
+        elif selection:
+            evolution_type = "Negative Selection"
         else:
-            fields = line.strip().split()
-            clu = fields[7].split(";")[-1].split("=")[1]
-            Format = fields[8].split(":")
-            AO_index = Format.index("AO")
-            DP_index = Format.index("DP")
-            for samp_col_num in range(9, len(fields)):
-                sample_name = header[samp_col_num]
-                dp = fields[samp_col_num].split(":")[DP_index]
-                ao = fields[samp_col_num].split(":")[AO_index]
-                af = float(ao)/float(dp)
-                variant_df.loc[len(variant_df.index)] = [sample_name, fields[0]+":"+fields[1], fields[3]+"->"+fields[4], clu, af]
-    infile.close()
+            evolution_type = "No Evolution"
+            
+        logger.info(f"Evolution type: {evolution_type}")
+        output_file.write(f"{evolution_type}\n")
+        
+        output_file.write(f"Subclones with Negative Selection: {','.join(selection_list)}\n")
+        output_file.write(f"Subclones with Positive Selection: {','.join(emergence_list)}\n")
+        output_file.write(f"Subclones with Replacement: {','.join(replacement_list)}\n")
 
-    ## Make the line plot of the VAFs for each mutation in each label group (cell type) ##
-    # Get the unique sample order from the original DataFrame
-    sample_order = variant_df['Sample'].unique()
-
-    # Pivot the DataFrame to make each column represent a mutation_id and each row a sample_id, with values being cellular_prevalence
-    allele_freq_matrix = variant_df.pivot(index='Sample', columns='Position', values='Allele_Frequency')
-
-    # Reindex to preserve the original sample order
-    allele_freq_matrix = allele_freq_matrix.reindex(sample_order)
-
-    # Determine unique clusters
-    unique_clusters = variant_df['Cluster'].unique()
-    cluster_colors = {cluster: plt.get_cmap('gist_rainbow')(i / len(unique_clusters)) for i, cluster in enumerate(unique_clusters)}
+def make_dot_files(subclones_vcf: str, tmp_graph_files: str) -> None:
+    """Create DOT files for evolutionary tree visualization.
     
-    # Set font sizes
+    Args:
+        subclones_vcf: Path to SuperSeeker VCF file
+        tmp_graph_files: Path to output directory for DOT files
+        
+    Raises:
+        FileNotFoundError: If input file is not found
+    """
+    vcf_path = Path(subclones_vcf)
+    if not vcf_path.exists():
+        raise FileNotFoundError(f"SuperSeeker VCF file not found: {subclones_vcf}")
+        
+    logger.info("Creating DOT files for tree visualization")
+    
+    with open(subclones_vcf, "r") as infile:
+        i = 0
+        for line in infile:
+            if line[0] != "#":
+                break
+            if line[0:10] == "##subclone":
+                i += 1
+                edges = line.split("\"")[1]
+                outfile_path = Path(tmp_graph_files) / f"solution{i}.gv"
+                
+                with open(outfile_path, "w") as outfile:
+                    outfile.write("digraph D{\n")
+                    for edge in edges.split(", "):
+                        outfile.write(f"{edge}\n")
+                    outfile.write(f"label=\"Solution {i}\"\nlabelloc=\"t\"\n}}\n")
+
+def make_line_plot(
+    vcf_file_name: str,
+    title: str,
+    show: bool = False,
+    save: bool = True,
+    plot_file_name: str = "vaf.png"
+) -> None:
+    """Create line plot of variant allele frequencies.
+    
+    Args:
+        vcf_file_name: Path to VCF file
+        title: Plot title
+        show: Whether to display the plot
+        save: Whether to save the plot
+        plot_file_name: Path to save plot
+        
+    Raises:
+        FileNotFoundError: If input file is not found
+    """
+    vcf_path = Path(vcf_file_name)
+    if not vcf_path.exists():
+        raise FileNotFoundError(f"VCF file not found: {vcf_file_name}")
+        
+    logger.info("Creating VAF line plot")
+    
+    # Create DataFrame of variant allele frequencies
+    variant_df = pd.DataFrame(columns=["Sample", "Position", "BP_Change", "Cluster", "Allele_Frequency"])
+    
+    with open(vcf_file_name, "r") as infile:
+        header = None
+        for line in infile:
+            if line[0] == "#":
+                header = line.strip().split()
+            else:
+                fields = line.strip().split()
+                clu = fields[7].split(";")[-1].split("=")[1]
+                Format = fields[8].split(":")
+                AO_index = Format.index("AO")
+                DP_index = Format.index("DP")
+                
+                for samp_col_num in range(9, len(fields)):
+                    sample_name = header[samp_col_num]
+                    dp = fields[samp_col_num].split(":")[DP_index]
+                    ao = fields[samp_col_num].split(":")[AO_index]
+                    af = float(ao)/float(dp)
+                    variant_df.loc[len(variant_df.index)] = [
+                        sample_name,
+                        f"{fields[0]}:{fields[1]}",
+                        f"{fields[3]}->{fields[4]}",
+                        clu,
+                        af
+                    ]
+    
+    # Create line plot
+    sample_order = variant_df['Sample'].unique()
+    allele_freq_matrix = variant_df.pivot(
+        index='Sample',
+        columns='Position',
+        values='Allele_Frequency'
+    ).reindex(sample_order)
+    
+    unique_clusters = variant_df['Cluster'].unique()
+    cluster_colors = {
+        cluster: plt.get_cmap('gist_rainbow')(i / len(unique_clusters))
+        for i, cluster in enumerate(unique_clusters)
+    }
+    
     plt.rcParams.update({
         'font.size': 14,
         'axes.titlesize': 20,
@@ -443,23 +591,36 @@ def make_line_plot(vcf_file_name, title, show, save, plot_file_name="vaf.png"):
         'ytick.labelsize': 14,
         'legend.fontsize': 14
     })
+    
     plt.figure(figsize=(16, 10))
-
-    # Plotting each mutation_id with a color based on its cluster
+    
     for position in allele_freq_matrix.columns:
         mutation_cluster = variant_df[variant_df['Position'] == position]['Cluster'].iloc[0]
         color = cluster_colors[mutation_cluster]
-        plt.plot(allele_freq_matrix.index, allele_freq_matrix[position], label=position, 
-                 linestyle='-', linewidth=2, alpha=0.7, color=color)
+        plt.plot(
+            allele_freq_matrix.index,
+            allele_freq_matrix[position],
+            label=position,
+            linestyle='-',
+            linewidth=2,
+            alpha=0.7,
+            color=color
+        )
     
     plt.xticks(rotation=90)
     plt.title(title)
     plt.ylabel('Cellular Prevalence')
     plt.xlabel('Sample ID')
-    plt.legend(title='Mutation ID', bbox_to_anchor=(1.05, 1), loc='upper left', fontsize='small')
+    plt.legend(
+        title='Mutation ID',
+        bbox_to_anchor=(1.05, 1),
+        loc='upper left',
+        fontsize='small'
+    )
     plt.tight_layout()
     
     if show:
         plt.show()
     if save:
         plt.savefig(plot_file_name, bbox_inches='tight')
+        logger.info(f"Plot saved to {plot_file_name}")
